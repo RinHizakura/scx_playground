@@ -28,14 +28,14 @@ BPFTOOL := $(OUTDIR)/sbin/bpftool
 GIT_HOOKS := .git/hooks/applied
 
 VMLINUX_BTF := $(abspath ../../../)/vmlinux
-VMLINUX := vmlinux.h
+VMLINUX_H := vmlinux.h
 
-CFLAGS = -Wall -Wextra -I$(OUTDIR) -I$(SCXDIR)/include -I$(LIBDIR) -I$(dir $(VMLINUX))
+CFLAGS = -Wall -Wextra -I$(OUTDIR) -I$(SCXDIR)/include -I$(LIBDIR) -I$(dir $(VMLINUX_H))
 LDFLAGS =
 BPF_CFLAGS = -g -O2 -Wall -D__TARGET_ARCH_$(ARCH) \
 	     -Wno-compare-distinct-pointer-types  \
 	     -mcpu=v3                             \
-	     -I$(SCXDIR)/include -I$(dir $(VMLINUX)) -I$(OUTDIR)/include -I$(APIDIR)
+	     -I$(SCXDIR)/include -I$(dir $(VMLINUX_H)) -I$(OUTDIR)/include -I$(APIDIR)
 
 CSRCS = $(shell find ./src -name '*.c')
 
@@ -61,7 +61,7 @@ $(BPFTOOL): | $(BPFTOOLOBJ_DIR)
 		EXTRA_CFLAGS='-g -O0'                       \
 		prefix= DESTDIR=$(OUTDIR)/ install-bin
 
-$(VMLINUX): $(VMLINUX_BTF) $(BPFTOOL)
+$(VMLINUX_H): $(VMLINUX_BTF) $(BPFTOOL)
 	$(call msg,GEN,,$@)
 	$(BPFTOOL) btf dump file $(VMLINUX_BTF) format c > $@
 
@@ -71,13 +71,13 @@ $(BPFOBJ): $(wildcard $(BPFDIR)/*.[ch] $(BPFDIR)/Makefile) | $(BPFOBJ_DIR)
 		EXTRA_CFLAGS='-g -O0 -fPIC'                           \
 		DESTDIR=$(OUTDIR) prefix= all install_headers
 
-$(OUTDIR)/%.bpf.o: %.bpf.c $(BPFOBJ) $(wildcard %.h) $(VMLINUX) $(BPFTOOL)
+$(OUTDIR)/%.bpf.o: %.bpf.c $(BPFOBJ) $(wildcard %.h) $(VMLINUX_H) $(BPFTOOL)
 	$(call msg,BPF,$@)
 	$(CLANG) -target bpf $(BPF_CFLAGS)                                \
 		-c $(filter %.c,$^) -o $(patsubst %.bpf.o,%.tmp.bpf.o,$@)
 	$(BPFTOOL) gen object $@ $(patsubst %.bpf.o,%.tmp.bpf.o,$@)
 
-$(OUTDIR)/%.bpf.skel.h: $(OUTDIR)/%.bpf.o $(VMLINUX) | $(OUTDIR) $(BPFTOOL)
+$(OUTDIR)/%.bpf.skel.h: $(OUTDIR)/%.bpf.o $(VMLINUX_H) | $(OUTDIR) $(BPFTOOL)
 	$(call msg,GEN-SKEL,$@)
 	$(BPFTOOL) gen skeleton $< > $@
 
@@ -97,7 +97,7 @@ $(BINARY): %: %.o $(BPFOBJ) | $(OUTDIR)
 
 clean:
 	$(call msg,CLEAN)
-	$(RM) -rf $(OUTDIR) $(VMLINUX)
+	$(RM) -rf $(OUTDIR) $(VMLINUX_H)
 
 .PHONY: all $(BINARY) clean
 
