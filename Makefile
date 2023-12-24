@@ -99,6 +99,9 @@ clean:
 	$(call msg,CLEAN)
 	$(RM) -rf $(OUTDIR) $(VMLINUX_H)
 
+check:
+	cd ../../../; vng
+
 .PHONY: all $(BINARY) clean
 
 # delete failed targets
