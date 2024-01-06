@@ -21,7 +21,6 @@
  * Copyright (c) 2022 David Vernet <dvernet@meta.com>
  */
 #include <scx/common.bpf.h>
-#include "msg.bpf.c"
 
 char _license[] SEC("license") = "GPL";
 
@@ -77,7 +76,7 @@ static int do_enqueue(pid_t pid)
     int err = 0;
     struct task_node_stash empty_stash = {}, *stash;
 
-    SEND_MSG("pid = %d", pid);
+    bpf_printk("pid = %d", pid);
 
     // Create a new element if the key's related entry is not exist(BPF_NOEXIST)
     err =

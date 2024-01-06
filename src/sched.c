@@ -5,11 +5,15 @@
  * Copyright (c) 2022 David Vernet <dvernet@meta.com>
  */
 #include <bpf/bpf.h>
+#include <fcntl.h>
 #include <libgen.h>
 #include <scx/common.h>
 #include <signal.h>
 #include <stdio.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
+
 #include "sched.bpf.skel.h"
 
 const char help_fmt[] =
@@ -68,6 +72,9 @@ int main(int argc, char **argv)
     signal(SIGINT, sigint_handler);
     signal(SIGTERM, sigint_handler);
 
+    int fd = open("/sys/kernel/debug/tracing/trace_pipe", O_RDONLY);
+    SCX_BUG_ON(!fd, "Failed to open trace_pipe");
+
     libbpf_set_strict_mode(LIBBPF_STRICT_ALL);
 
     skel = sched_bpf__open();
@@ -87,23 +94,23 @@ int main(int argc, char **argv)
     link = bpf_map__attach_struct_ops(skel->maps.simple_ops);
     SCX_BUG_ON(!link, "Failed to attach struct_ops");
 
-    struct ring_buffer *rb = ring_buffer__new(
-        bpf_map__fd(skel->maps.msg_ringbuf), handle_msg, NULL, NULL);
-    SCX_BUG_ON(!rb, "Failed to access ring buffer");
-
+    ssize_t r;
+    char buf[256];
     while (!exit_req && !uei_exited(&skel->bss->uei)) {
         __u64 stats[2];
         read_stats(skel, stats);
         printf("local=%llu global=%llu\n", stats[0], stats[1]);
         fflush(stdout);
 
-        int err = ring_buffer__poll(rb, 100 /* timeout, ms */);
-        if (err == -EINTR)
-            break;
-        SCX_BUG_ON(err < 0, "Failed to poll ring buffer");
+        r = read(fd, buf, 256);
+        if (r) {
+            buf[r] = 0;
+            printf("%s\n", buf);
+        }
         sleep(1);
     }
 
+    close(fd);
     bpf_link__destroy(link);
     uei_print(&skel->bss->uei);
     sched_bpf__destroy(skel);
