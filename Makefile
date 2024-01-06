@@ -38,6 +38,7 @@ BPF_CFLAGS = -g -O2 -Wall -D__TARGET_ARCH_$(ARCH) \
 	     -I$(SCXDIR)/include -I$(dir $(VMLINUX_H)) -I$(OUTDIR)/include -I$(APIDIR)
 
 CSRCS = $(shell find ./src -name '*.c')
+CSRCS += $(shell find ./bpf -name '*.c')
 
 vpath %.c $(sort $(dir $(CSRCS)))
 
