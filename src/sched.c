@@ -48,6 +48,17 @@ static void read_stats(struct sched_bpf *skel, __u64 *stats)
     }
 }
 
+#define MSG_LEN 64
+typedef struct {
+    char msg[MSG_LEN + 1];
+} msg_ent_t;
+
+static int handle_msg(void *ctx, void *data, size_t data_sz)
+{
+    msg_ent_t *ent = data;
+    puts(ent->msg);
+}
+
 int main(int argc, char **argv)
 {
     struct sched_bpf *skel;
@@ -76,12 +87,20 @@ int main(int argc, char **argv)
     link = bpf_map__attach_struct_ops(skel->maps.simple_ops);
     SCX_BUG_ON(!link, "Failed to attach struct_ops");
 
+    struct ring_buffer *rb = ring_buffer__new(
+        bpf_map__fd(skel->maps.msg_ringbuf), handle_msg, NULL, NULL);
+    SCX_BUG_ON(!rb, "Failed to access ring buffer");
+
     while (!exit_req && !uei_exited(&skel->bss->uei)) {
         __u64 stats[2];
-
         read_stats(skel, stats);
         printf("local=%llu global=%llu\n", stats[0], stats[1]);
         fflush(stdout);
+
+        int err = ring_buffer__poll(rb, 100 /* timeout, ms */);
+        if (err == -EINTR)
+            break;
+        SCX_BUG_ON(err < 0, "Failed to poll ring buffer");
         sleep(1);
     }
 
