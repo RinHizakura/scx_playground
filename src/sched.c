@@ -19,8 +19,6 @@ const char help_fmt[] =
     "\n"
     "Usage: %s [-f] [-p]\n"
     "\n"
-    "  -f            Use FIFO scheduling instead of weighted vtime scheduling\n"
-    "  -p            Switch only tasks on SCHED_EXT policy intead of all\n"
     "  -h            Display this help and exit\n";
 
 static volatile int exit_req;
@@ -66,12 +64,7 @@ int main(int argc, char **argv)
 
     while ((opt = getopt(argc, argv, "fph")) != -1) {
         switch (opt) {
-        case 'f':
-            skel->rodata->fifo_sched = true;
-            break;
-        case 'p':
-            skel->rodata->switch_partial = true;
-            break;
+        case 'h':
         default:
             fprintf(stderr, help_fmt, basename(argv[0]));
             return opt != 'h';

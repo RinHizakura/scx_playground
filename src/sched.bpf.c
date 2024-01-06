@@ -24,9 +24,6 @@
 
 char _license[] SEC("license") = "GPL";
 
-const volatile bool fifo_sched;
-const volatile bool switch_partial;
-
 static u64 vtime_now;
 struct user_exit_info uei;
 
@@ -66,20 +63,16 @@ void BPF_STRUCT_OPS(simple_enqueue, struct task_struct *p, u64 enq_flags)
 
     stat_inc(1); /* count global queueing */
 
-    if (fifo_sched) {
-        scx_bpf_dispatch(p, SHARED_DSQ, SCX_SLICE_DFL, enq_flags);
-    } else {
-        u64 vtime = p->scx.dsq_vtime;
+    u64 vtime = p->scx.dsq_vtime;
 
-        /*
-         * Limit the amount of budget that an idling task can accumulate
-         * to one slice.
-         */
-        if (vtime_before(vtime, vtime_now - SCX_SLICE_DFL))
-            vtime = vtime_now - SCX_SLICE_DFL;
+    /*
+     * Limit the amount of budget that an idling task can accumulate
+     * to one slice.
+     */
+    if (vtime_before(vtime, vtime_now - SCX_SLICE_DFL))
+        vtime = vtime_now - SCX_SLICE_DFL;
 
-        scx_bpf_dispatch_vtime(p, SHARED_DSQ, SCX_SLICE_DFL, vtime, enq_flags);
-    }
+    scx_bpf_dispatch_vtime(p, SHARED_DSQ, SCX_SLICE_DFL, vtime, enq_flags);
 }
 
 void BPF_STRUCT_OPS(simple_dispatch, s32 cpu, struct task_struct *prev)
@@ -89,9 +82,6 @@ void BPF_STRUCT_OPS(simple_dispatch, s32 cpu, struct task_struct *prev)
 
 void BPF_STRUCT_OPS(simple_running, struct task_struct *p)
 {
-    if (fifo_sched)
-        return;
-
     /*
      * Global vtime always progresses forward as tasks start executing. The
      * test and update can be performed concurrently from multiple CPUs and
@@ -104,9 +94,6 @@ void BPF_STRUCT_OPS(simple_running, struct task_struct *p)
 
 void BPF_STRUCT_OPS(simple_stopping, struct task_struct *p, bool runnable)
 {
-    if (fifo_sched)
-        return;
-
     /*
      * Scale the execution time by the inverse of the weight and charge.
      *
@@ -128,8 +115,7 @@ void BPF_STRUCT_OPS(simple_enable,
 
 s32 BPF_STRUCT_OPS_SLEEPABLE(simple_init)
 {
-    if (!switch_partial)
-        scx_bpf_switch_all();
+    scx_bpf_switch_all();
 
     return scx_bpf_create_dsq(SHARED_DSQ, -1);
 }
