@@ -99,7 +99,7 @@ clean:
 	$(call msg,CLEAN)
 	$(RM) -rf $(OUTDIR) $(VMLINUX_H)
 
-check:
+check: $(BINARY)
 	cd ../../../; vng
 
 .PHONY: all $(BINARY) clean

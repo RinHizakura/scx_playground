@@ -36,6 +36,28 @@ struct {
     __uint(max_entries, 2); /* [local, global] */
 } stats SEC(".maps");
 
+/* The following describe a reb-black tree for task, which
+ * using the vtime of tasks as key to order them. */
+struct task_node {
+    struct bpf_rb_node rb_node;
+    u64 vtime;
+    pid_t pid;
+};
+private(VTIME_TREE) struct bpf_spin_lock vtime_tree_lock;
+private(VTIME_TREE) struct bpf_rb_root vtime_tree
+    __contains(task_node, rb_node);
+
+/* This structure manages the dynamic allocated node instance. */
+struct task_node_stash {
+    struct task_node __kptr *node;
+};
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 16384);
+    __type(key, u64);
+    __type(value, struct task_node_stash);
+} task_node_stash SEC(".maps");
+
 static void stat_inc(u32 idx)
 {
     u64 *cnt_p = bpf_map_lookup_elem(&stats, &idx);
@@ -46,6 +68,59 @@ static void stat_inc(u32 idx)
 static inline bool vtime_before(u64 a, u64 b)
 {
     return (s64) (a - b) < 0;
+}
+
+static int do_enqueue(pid_t pid)
+{
+    u64 key = pid;
+    int err = 0;
+    struct task_node_stash empty_stash = {}, *stash;
+
+    bpf_printk("pid = %d", pid);
+
+    // Create a new element if the key's related entry is not exist(BPF_NOEXIST)
+    err =
+        bpf_map_update_elem(&task_node_stash, &key, &empty_stash, BPF_NOEXIST);
+    if (err) {
+        if (err != -EEXIST && err != -ENOMEM)
+            scx_bpf_error("unexpected stash creation error(%d)", err);
+        goto err_end;
+    }
+
+    // Access the entry in hashmap by the key
+    stash = bpf_map_lookup_elem(&task_node_stash, &key);
+    if (!stash) {
+        scx_bpf_error("unexpected node stash lookup failure");
+        err = -ENOENT;
+        goto err_end;
+    }
+
+    // Create node for the task
+    struct task_node *node = bpf_obj_new(struct task_node);
+    if (!node) {
+        scx_bpf_error("unexpected node allocated error");
+        err = -ENOMEM;
+        goto err_del_node;
+    }
+
+    node->pid = pid;
+    node->vtime = vtime_now;
+
+    node = bpf_kptr_xchg(&stash->node, node);
+    if (node) {
+        scx_bpf_error("unexpected !NULL node stash");
+        err = -EBUSY;
+        goto err_drop;
+    }
+
+    return 0;
+
+err_drop:
+    bpf_obj_drop(node);
+err_del_node:
+    bpf_map_delete_elem(&task_node_stash, &key);
+err_end:
+    return err;
 }
 
 void BPF_STRUCT_OPS(simple_enqueue, struct task_struct *p, u64 enq_flags)
@@ -71,6 +146,8 @@ void BPF_STRUCT_OPS(simple_enqueue, struct task_struct *p, u64 enq_flags)
      */
     if (vtime_before(vtime, vtime_now - SCX_SLICE_DFL))
         vtime = vtime_now - SCX_SLICE_DFL;
+
+    do_enqueue(p->pid);
 
     scx_bpf_dispatch_vtime(p, SHARED_DSQ, SCX_SLICE_DFL, vtime, enq_flags);
 }
