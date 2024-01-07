@@ -71,59 +71,77 @@ static inline bool vtime_before(u64 a, u64 b)
     return (s64) (a - b) < 0;
 }
 
+static bool task_node_less(struct bpf_rb_node *a, const struct bpf_rb_node *b)
+{
+    struct task_node *ta, *tb;
+
+    ta = container_of(a, struct task_node, rb_node);
+    tb = container_of(b, struct task_node, rb_node);
+
+    return ta->vtime < tb->vtime;
+}
+
+static void vtime_tree_add(struct task_node *node)
+{
+    bpf_spin_lock(&vtime_tree_lock);
+    bpf_rbtree_add(&vtime_tree, &node->rb_node, task_node_less);
+    bpf_spin_unlock(&vtime_tree_lock);
+}
+
+static int vtime_tree_remove(struct task_node *node)
+{
+    int err = 0;
+
+    struct bpf_rb_node *tmp;
+    bpf_spin_lock(&vtime_tree_lock);
+    tmp = bpf_rbtree_remove(&vtime_tree, &node->rb_node);
+    if (!tmp) {
+        err = -ENOENT;
+        scx_bpf_error("remove no exist node");
+    }
+    bpf_spin_unlock(&vtime_tree_lock);
+
+    return err;
+}
+
 static int do_enqueue(pid_t pid)
 {
-    u64 key = pid;
     int err = 0;
-    struct task_node_stash empty_stash = {}, *stash;
 
     bpf_printk("enqueue pid = %d", pid);
-
-    // Create a new element if the key's related entry is not exist(BPF_NOEXIST)
-    err =
-        bpf_map_update_elem(&task_node_stash, &key, &empty_stash, BPF_NOEXIST);
-    if (err && err != -EEXIST) {
-        if (err != -ENOMEM)
-            scx_bpf_error("unexpected stash creation error(%d)", err);
-        goto err_end;
-    }
-
-    // Access the entry in hashmap by the key
-    stash = bpf_map_lookup_elem(&task_node_stash, &key);
-    if (!stash) {
-        scx_bpf_error("unexpected node stash lookup failure");
-        err = -ENOENT;
-        goto err_end;
-    }
 
     // Create node for the task
     struct task_node *node = bpf_obj_new(struct task_node);
     if (!node) {
         scx_bpf_error("unexpected node allocated error");
         err = -ENOMEM;
-        goto err_del_node;
+        goto err_end;
     }
 
     node->pid = pid;
     node->vtime = vtime_now;
 
-    node = bpf_kptr_xchg(&stash->node, node);
-    if (node) {
-        scx_bpf_error("unexpected !NULL node stash");
-        err = -EBUSY;
-        goto err_drop;
-    }
+    vtime_tree_add(node);
 
     bpf_printk("enqueue pid = %d success", pid);
     return 0;
 
-err_drop:
-    bpf_obj_drop(node);
-err_del_node:
-    bpf_map_delete_elem(&task_node_stash, &key);
 err_end:
     bpf_printk("enqueue pid = %d fail", pid);
     return err;
+}
+
+static int do_dequeue(pid_t pid)
+{
+    bpf_printk("dequeue pid = %d", pid);
+
+    // TODO: Implement behavior to remove the node from rbtree
+    // vtime_tree_remove(node);
+    // bpf_obj_drop(node);
+
+    bpf_printk("dequeue pid=%d success\n", pid);
+    return 0;
+
 }
 
 void BPF_STRUCT_OPS(simple_enqueue, struct task_struct *p, u64 enq_flags)
@@ -170,37 +188,6 @@ void BPF_STRUCT_OPS(simple_running, struct task_struct *p)
      */
     if (vtime_before(vtime_now, p->scx.dsq_vtime))
         vtime_now = p->scx.dsq_vtime;
-}
-
-static int do_dequeue(pid_t pid)
-{
-    u64 key = pid;
-    int err = 0;
-    struct task_node_stash *stash;
-
-    bpf_printk("dequeue pid = %d", pid);
-
-    stash = bpf_map_lookup_elem(&task_node_stash, &key);
-    if (!stash) {
-        bpf_printk("dequeue pid=%d not exist\n", pid);
-        return 0;
-    }
-
-    struct task_node *node = bpf_kptr_xchg(&stash->node, NULL);
-    if (!node) {
-        scx_bpf_error("unexpected NULL node stash");
-        err = -EBUSY;
-        goto err_end;
-    }
-
-    bpf_obj_drop(node);
-
-    bpf_printk("dequeue pid=%d success\n", pid);
-    return 0;
-
-err_end:
-    bpf_printk("dequeue pid=%d fail\n", pid);
-    return err;
 }
 
 void BPF_STRUCT_OPS(simple_stopping, struct task_struct *p, bool runnable)
