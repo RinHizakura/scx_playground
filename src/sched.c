@@ -68,6 +68,8 @@ int main(int argc, char **argv)
     struct sched_bpf *skel;
     struct bpf_link *link;
     __u32 opt;
+    ssize_t r;
+    char buf[256];
 
     signal(SIGINT, sigint_handler);
     signal(SIGTERM, sigint_handler);
@@ -94,16 +96,13 @@ int main(int argc, char **argv)
     link = bpf_map__attach_struct_ops(skel->maps.simple_ops);
     SCX_BUG_ON(!link, "Failed to attach struct_ops");
 
-    ssize_t r;
-    char buf[256];
     while (!exit_req && !uei_exited(&skel->bss->uei)) {
         __u64 stats[2];
         read_stats(skel, stats);
         printf("local=%llu global=%llu\n", stats[0], stats[1]);
         fflush(stdout);
 
-        r = read(fd, buf, 256);
-        if (r) {
+        if (r = read(fd, buf, 256)) {
             buf[r] = 0;
             printf("%s\n", buf);
         }

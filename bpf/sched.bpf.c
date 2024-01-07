@@ -20,6 +20,7 @@
  * Copyright (c) 2022 Tejun Heo <tj@kernel.org>
  * Copyright (c) 2022 David Vernet <dvernet@meta.com>
  */
+#include <asm-generic/errno-base.h>
 #include <scx/common.bpf.h>
 
 char _license[] SEC("license") = "GPL";
@@ -76,13 +77,13 @@ static int do_enqueue(pid_t pid)
     int err = 0;
     struct task_node_stash empty_stash = {}, *stash;
 
-    bpf_printk("pid = %d", pid);
+    bpf_printk("enqueue pid = %d", pid);
 
     // Create a new element if the key's related entry is not exist(BPF_NOEXIST)
     err =
         bpf_map_update_elem(&task_node_stash, &key, &empty_stash, BPF_NOEXIST);
-    if (err) {
-        if (err != -EEXIST && err != -ENOMEM)
+    if (err && err != -EEXIST) {
+        if (err != -ENOMEM)
             scx_bpf_error("unexpected stash creation error(%d)", err);
         goto err_end;
     }
@@ -113,6 +114,7 @@ static int do_enqueue(pid_t pid)
         goto err_drop;
     }
 
+    bpf_printk("enqueue pid = %d success", pid);
     return 0;
 
 err_drop:
@@ -120,6 +122,7 @@ err_drop:
 err_del_node:
     bpf_map_delete_elem(&task_node_stash, &key);
 err_end:
+    bpf_printk("enqueue pid = %d fail", pid);
     return err;
 }
 
@@ -169,6 +172,37 @@ void BPF_STRUCT_OPS(simple_running, struct task_struct *p)
         vtime_now = p->scx.dsq_vtime;
 }
 
+static int do_dequeue(pid_t pid)
+{
+    u64 key = pid;
+    int err = 0;
+    struct task_node_stash *stash;
+
+    bpf_printk("dequeue pid = %d", pid);
+
+    stash = bpf_map_lookup_elem(&task_node_stash, &key);
+    if (!stash) {
+        bpf_printk("dequeue pid=%d not exist\n", pid);
+        return 0;
+    }
+
+    struct task_node *node = bpf_kptr_xchg(&stash->node, NULL);
+    if (!node) {
+        scx_bpf_error("unexpected NULL node stash");
+        err = -EBUSY;
+        goto err_end;
+    }
+
+    bpf_obj_drop(node);
+
+    bpf_printk("dequeue pid=%d success\n", pid);
+    return 0;
+
+err_end:
+    bpf_printk("dequeue pid=%d fail\n", pid);
+    return err;
+}
+
 void BPF_STRUCT_OPS(simple_stopping, struct task_struct *p, bool runnable)
 {
     /*
@@ -181,6 +215,8 @@ void BPF_STRUCT_OPS(simple_stopping, struct task_struct *p, bool runnable)
      * instead of depending on @p->scx.slice.
      */
     p->scx.dsq_vtime += (SCX_SLICE_DFL - p->scx.slice) * 100 / p->scx.weight;
+
+    do_dequeue(p->pid);
 }
 
 void BPF_STRUCT_OPS(simple_enable,
