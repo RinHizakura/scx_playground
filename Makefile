@@ -103,10 +103,7 @@ clean:
 check: $(BINARY)
 	cd ../../../; vng
 
-.PHONY: all $(BINARY) clean
-
 # delete failed targets
 .DELETE_ON_ERROR:
 
-# keep intermediate (.bpf.skel.h, .bpf.o, etc) targets
-.SECONDARY:
+.PHONY: all $(BINARY) check clean
