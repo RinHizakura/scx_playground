@@ -16,6 +16,8 @@
 
 #include "sched.bpf.skel.h"
 
+#define UNUSED __attribute__((unused))
+
 const char help_fmt[] =
     "A simple sched_ext scheduler.\n"
     "\n"
@@ -27,7 +29,7 @@ const char help_fmt[] =
 
 static volatile int exit_req;
 
-static void sigint_handler(int simple)
+static void sigint_handler(UNUSED int simple)
 {
     exit_req = 1;
 }
@@ -52,22 +54,11 @@ static void read_stats(struct sched_bpf *skel, __u64 *stats)
     }
 }
 
-#define MSG_LEN 64
-typedef struct {
-    char msg[MSG_LEN + 1];
-} msg_ent_t;
-
-static int handle_msg(void *ctx, void *data, size_t data_sz)
-{
-    msg_ent_t *ent = data;
-    puts(ent->msg);
-}
-
 int main(int argc, char **argv)
 {
     struct sched_bpf *skel;
     struct bpf_link *link;
-    __u32 opt;
+    u32 opt;
     ssize_t r;
     char buf[256];
 
@@ -82,7 +73,7 @@ int main(int argc, char **argv)
     skel = sched_bpf__open();
     SCX_BUG_ON(!skel, "Failed to open skel");
 
-    while ((opt = getopt(argc, argv, "fph")) != -1) {
+    while ((opt = getopt(argc, argv, "fph")) != (u32) -1) {
         switch (opt) {
         case 'h':
         default:
@@ -102,7 +93,7 @@ int main(int argc, char **argv)
         printf("local=%llu global=%llu\n", stats[0], stats[1]);
         fflush(stdout);
 
-        if (r = read(fd, buf, 256)) {
+        if ((r = read(fd, buf, 256))) {
             buf[r] = 0;
             printf("%s\n", buf);
         }

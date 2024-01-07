@@ -30,9 +30,11 @@ GIT_HOOKS := .git/hooks/applied
 VMLINUX_BTF := $(abspath ../../../)/vmlinux
 VMLINUX_H := vmlinux.h
 
-CFLAGS = -Wall -Wextra -I$(OUTDIR) -I$(SCXDIR)/include -I$(LIBDIR) -I$(dir $(VMLINUX_H))
+CFLAGS = -Wall -Wextra -Werror \
+	 -I$(OUTDIR) -I$(SCXDIR)/include -I$(LIBDIR) -I$(dir $(VMLINUX_H))
 LDFLAGS =
-BPF_CFLAGS = -g -O2 -Wall -D__TARGET_ARCH_$(ARCH) \
+BPF_CFLAGS = -g -O2 -Wall -Werror                 \
+	     -D__TARGET_ARCH_$(ARCH)              \
 	     -Wno-compare-distinct-pointer-types  \
 	     -mcpu=v3                             \
 	     -I$(SCXDIR)/include -I$(dir $(VMLINUX_H)) -I$(OUTDIR)/include -I$(APIDIR)
