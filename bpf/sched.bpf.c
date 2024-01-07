@@ -88,60 +88,78 @@ static void vtime_tree_add(struct task_node *node)
     bpf_spin_unlock(&vtime_tree_lock);
 }
 
-static int vtime_tree_remove(struct task_node *node)
+static struct task_node *vtime_tree_remove_first()
 {
-    int err = 0;
-
-    struct bpf_rb_node *tmp;
     bpf_spin_lock(&vtime_tree_lock);
-    tmp = bpf_rbtree_remove(&vtime_tree, &node->rb_node);
-    if (!tmp) {
-        err = -ENOENT;
-        scx_bpf_error("remove no exist node");
+    struct bpf_rb_node *rb_node = bpf_rbtree_first(&vtime_tree);
+    if (!rb_node) {
+        bpf_spin_unlock(&vtime_tree_lock);
+        bpf_printk("empty rbtree");
+        return NULL;
     }
-    bpf_spin_unlock(&vtime_tree_lock);
 
-    return err;
+    rb_node = bpf_rbtree_remove(&vtime_tree, rb_node);
+    bpf_spin_unlock(&vtime_tree_lock);
+    if (!rb_node) {
+        /*
+         * This should never happen. bpf_rbtree_first() was called
+         * above while the tree lock was held, so the node should
+         * always be present.
+         */
+        scx_bpf_error("node could not be removed");
+        return NULL;
+    }
+
+    return container_of(rb_node, struct task_node, rb_node);
 }
 
-static int do_enqueue(pid_t pid)
+static void do_enqueue(struct task_struct *p)
 {
-    int err = 0;
+    pid_t pid = p->pid;
 
-    bpf_printk("enqueue pid = %d", pid);
+    bpf_printk("enqueue pid=%d", pid);
 
     // Create node for the task
     struct task_node *node = bpf_obj_new(struct task_node);
     if (!node) {
         scx_bpf_error("unexpected node allocated error");
-        err = -ENOMEM;
         goto err_end;
     }
 
     node->pid = pid;
-    node->vtime = vtime_now;
+    node->vtime = p->scx.dsq_vtime;
 
     vtime_tree_add(node);
 
-    bpf_printk("enqueue pid = %d success", pid);
-    return 0;
+    bpf_printk("enqueue pid=%d success", pid);
+    return;
 
 err_end:
-    bpf_printk("enqueue pid = %d fail", pid);
-    return err;
+    bpf_printk("enqueue pid=%d fail", pid);
+    return;
 }
 
-static int do_dequeue(pid_t pid)
+static struct task_struct *do_dequeue()
 {
-    bpf_printk("dequeue pid = %d", pid);
+    bpf_printk("dequeue");
 
-    // TODO: Implement behavior to remove the node from rbtree
-    // vtime_tree_remove(node);
-    // bpf_obj_drop(node);
+    struct task_node *node = vtime_tree_remove_first();
+    if (!node)
+        goto err_end;
+
+    pid_t pid = node->pid;
+    bpf_obj_drop(node);
+
+    struct task_struct *p = bpf_task_from_pid(pid);
+    if (!p)
+        goto err_end;
 
     bpf_printk("dequeue pid=%d success\n", pid);
-    return 0;
+    return p;
 
+err_end:
+    bpf_printk("dequeue fail");
+    return NULL;
 }
 
 void BPF_STRUCT_OPS(simple_enqueue, struct task_struct *p, u64 enq_flags)
@@ -166,20 +184,28 @@ void BPF_STRUCT_OPS(simple_enqueue, struct task_struct *p, u64 enq_flags)
      * to one slice.
      */
     if (vtime_before(vtime, vtime_now - SCX_SLICE_DFL))
-        vtime = vtime_now - SCX_SLICE_DFL;
+        p->scx.dsq_vtime = vtime_now - SCX_SLICE_DFL;
 
-    do_enqueue(p->pid);
-
-    scx_bpf_dispatch_vtime(p, SHARED_DSQ, SCX_SLICE_DFL, vtime, enq_flags);
+    do_enqueue(p);
 }
 
 void BPF_STRUCT_OPS(simple_dispatch, s32 cpu, struct task_struct *prev)
 {
-    scx_bpf_consume(SHARED_DSQ);
+    bpf_printk("dispatch start");
+
+    struct task_struct *p = do_dequeue();
+    if (!p) {
+        return;
+    }
+
+    scx_bpf_dispatch(p, SCX_DSQ_GLOBAL, SCX_SLICE_DFL, 0);
+    bpf_printk("dispatch pid=%d success", p->pid);
+    bpf_task_release(p);
 }
 
 void BPF_STRUCT_OPS(simple_running, struct task_struct *p)
 {
+    bpf_printk("running pid=%d", p->pid);
     /*
      * Global vtime always progresses forward as tasks start executing. The
      * test and update can be performed concurrently from multiple CPUs and
@@ -192,6 +218,7 @@ void BPF_STRUCT_OPS(simple_running, struct task_struct *p)
 
 void BPF_STRUCT_OPS(simple_stopping, struct task_struct *p, bool runnable)
 {
+    bpf_printk("stopping pid=%d", p->pid);
     /*
      * Scale the execution time by the inverse of the weight and charge.
      *
@@ -202,8 +229,6 @@ void BPF_STRUCT_OPS(simple_stopping, struct task_struct *p, bool runnable)
      * instead of depending on @p->scx.slice.
      */
     p->scx.dsq_vtime += (SCX_SLICE_DFL - p->scx.slice) * 100 / p->scx.weight;
-
-    do_dequeue(p->pid);
 }
 
 void BPF_STRUCT_OPS(simple_enable,
