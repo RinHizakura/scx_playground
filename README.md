@@ -1,22 +1,20 @@
 # scx_playground
 
 This is a playground to develop a BPF-extensible scheduler(sched_ext) on Linux. It
-aims to provide friendly framework for everyone to build their scheduler with their
-own implementation!
+aims to provide friendly example for everyone to build their custumized scheduler.
 
 For simplicity, we assume that the extensible scheduler always builds with the
 kernel source codes that it will run on later. We also assume that there's no
-requirement for cross-compilation. These assumptions purposely lead to a simple
-Makefile which should be more friendly for reader to take a glance and understand
-the compilation flow easily. Once you understand the minimalist Makefile to build
-the sched_ext, extending it for advanced requirement should not be a hard problem
+requirement for cross-compilation. Base on the assumptions, we can purposely
+design a simple Makefile which is friendly for user to take a glance and understand
+the compilation flow easily.
 
 ## How to play with scx?
 
-Under the assumption above, first you need to clone the kernel that support extensible
-scheduler([sched_ext](https://github.com/sched-ext/sched_ext/tree/sched_ext)) and build it.
-The version of toolchain and the configuration for kernel is restricted. Please take
-a look at [this page](https://github.com/sched-ext/sched_ext/tree/sched_ext/tools/sched_ext)
+Under the assumption above, first you need to clone the Linux kernel with
+verison >= 6.13 and build it. Please note that the version of toolchain and the
+configuration for Linux is also restricted. Take a look at
+[this page](https://github.com/sched-ext/sched_ext/tree/sched_ext/tools/sched_ext)
 for the details.
 
 After compiling the kernel, you just need to put this project under the path
