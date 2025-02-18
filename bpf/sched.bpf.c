@@ -26,7 +26,7 @@
 char _license[] SEC("license") = "GPL";
 
 static u64 vtime_now;
-struct user_exit_info uei;
+UEI_DEFINE(uei);
 
 #define SHARED_DSQ 0
 
@@ -162,19 +162,29 @@ err_end:
     return NULL;
 }
 
-void BPF_STRUCT_OPS(simple_enqueue, struct task_struct *p, u64 enq_flags)
+
+s32 BPF_STRUCT_OPS(simple_select_cpu,
+                   struct task_struct *p,
+                   s32 prev_cpu,
+                   u64 wake_flags)
 {
-    /*
-     * If scx_select_cpu_dfl() is setting %SCX_ENQ_LOCAL, it indicates that
-     * running @p on its CPU directly shouldn't affect fairness. Just queue
-     * it on the local FIFO.
-     */
-    if (enq_flags & SCX_ENQ_LOCAL) {
+    /* We no longer pass SCX_ENQ_LOCAL to .enqueue() when the default CPU
+     * selection has found a core to schedule. Callers can instead use
+     * scx_bpf_select_cpu_dfl() to get the same behavior and then
+     * decide whether to direct dispatch or not. */
+    bool is_idle = false;
+
+    s32 cpu = scx_bpf_select_cpu_dfl(p, prev_cpu, wake_flags, &is_idle);
+    if (is_idle) {
         stat_inc(0); /* count local queueing */
-        scx_bpf_dispatch(p, SCX_DSQ_LOCAL, SCX_SLICE_DFL, enq_flags);
-        return;
+        scx_bpf_dsq_insert(p, SCX_DSQ_LOCAL, SCX_SLICE_DFL, 0);
     }
 
+    return cpu;
+}
+
+void BPF_STRUCT_OPS(simple_enqueue, struct task_struct *p, u64 enq_flags)
+{
     stat_inc(1); /* count global queueing */
 
     u64 vtime = p->scx.dsq_vtime;
@@ -198,7 +208,7 @@ void BPF_STRUCT_OPS(simple_dispatch, s32 cpu, struct task_struct *prev)
         return;
     }
 
-    scx_bpf_dispatch(p, SCX_DSQ_GLOBAL, SCX_SLICE_DFL, 0);
+    scx_bpf_dsq_insert(p, SCX_DSQ_GLOBAL, SCX_SLICE_DFL, 0);
     bpf_printk("dispatch pid=%d success", p->pid);
     bpf_task_release(p);
 }
@@ -231,27 +241,26 @@ void BPF_STRUCT_OPS(simple_stopping, struct task_struct *p, bool runnable)
     p->scx.dsq_vtime += (SCX_SLICE_DFL - p->scx.slice) * 100 / p->scx.weight;
 }
 
-void BPF_STRUCT_OPS(simple_enable,
-                    struct task_struct *p,
-                    struct scx_enable_args *args)
+void BPF_STRUCT_OPS(simple_enable, struct task_struct *p)
 {
     p->scx.dsq_vtime = vtime_now;
 }
 
 s32 BPF_STRUCT_OPS_SLEEPABLE(simple_init)
 {
-    scx_bpf_switch_all();
-
+    /* By default, all SCHED_EXT, SCHED_OTHER, SCHED_IDLE, and
+     * SCHED_BATCH tasks should use sched_ext. */
     return scx_bpf_create_dsq(SHARED_DSQ, -1);
 }
 
 void BPF_STRUCT_OPS(simple_exit, struct scx_exit_info *ei)
 {
-    uei_record(&uei, ei);
+    UEI_RECORD(uei, ei);
 }
 
 SEC(".struct_ops.link")
 struct sched_ext_ops simple_ops = {
+    .select_cpu = (void *) simple_select_cpu,
     .enqueue = (void *) simple_enqueue,
     .dispatch = (void *) simple_dispatch,
     .running = (void *) simple_running,

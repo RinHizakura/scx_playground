@@ -87,7 +87,7 @@ int main(int argc, char **argv)
     link = bpf_map__attach_struct_ops(skel->maps.simple_ops);
     SCX_BUG_ON(!link, "Failed to attach struct_ops");
 
-    while (!exit_req && !uei_exited(&skel->bss->uei)) {
+    while (!exit_req && !UEI_EXITED(skel, uei)) {
         __u64 stats[2];
         read_stats(skel, stats);
         printf("local=%llu global=%llu\n", stats[0], stats[1]);
@@ -102,7 +102,7 @@ int main(int argc, char **argv)
 
     close(fd);
     bpf_link__destroy(link);
-    uei_print(&skel->bss->uei);
+    UEI_REPORT(skel, uei);
     sched_bpf__destroy(skel);
     return 0;
 }

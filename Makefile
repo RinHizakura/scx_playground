@@ -30,14 +30,27 @@ GIT_HOOKS := .git/hooks/applied
 VMLINUX_BTF := $(abspath ../../../)/vmlinux
 VMLINUX_H := vmlinux.h
 
-CFLAGS = -Wall -Wextra -Werror \
-	 -I$(OUTDIR) -I$(SCXDIR)/include -I$(LIBDIR) -I$(dir $(VMLINUX_H))
+CFLAGS = -g -O2 -Wall -Werror -DHAVE_GENHDR \
+	 -I$(OUTDIR)/include                \
+	 -I$(OUTDIR)                        \
+	 -I$(SCXDIR)/include                \
+	 -I$(LIBDIR)                        \
+	 -I$(APIDIR)
+
+# Silence some warnings when compiled with clang
+ifneq ($(LLVM),)
+CFLAGS += -Wno-unused-command-line-argument
+endif
+
 LDFLAGS =
-BPF_CFLAGS = -g -O2 -Wall -Werror                 \
-	     -D__TARGET_ARCH_$(ARCH)              \
-	     -Wno-compare-distinct-pointer-types  \
-	     -mcpu=v3                             \
-	     -I$(SCXDIR)/include -I$(dir $(VMLINUX_H)) -I$(OUTDIR)/include -I$(APIDIR)
+BPF_CFLAGS = -g -O2 -Wall -Werror                  \
+	     -D__TARGET_ARCH_$(ARCH)               \
+	     -Wno-compare-distinct-pointer-types   \
+	     -mcpu=v3                              \
+	     -I$(SCXDIR)/include                   \
+	     -I$(dir $(VMLINUX_H))                 \
+	     -I$(OUTDIR)/include                   \
+	     -I$(APIDIR)
 
 CSRCS = $(shell find ./src -name '*.c')
 CSRCS += $(shell find ./bpf -name '*.c')
